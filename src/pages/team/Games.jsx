@@ -12,10 +12,10 @@ export default function Games() {
   useEffect(() => {
     const load = async () => {
       const { data: team } = await supabase
-        .from('teams').select('id').eq('team_path', teamPath).single()
+        .from('hb_teams').select('id').eq('team_path', teamPath).single()
       if (!team) { setLoading(false); return }
       const { data } = await supabase
-        .from('team_games')
+        .from('hb_team_games')
         .select('*')
         .eq('team_id', team.id)
         .order('game_date', { ascending: false })

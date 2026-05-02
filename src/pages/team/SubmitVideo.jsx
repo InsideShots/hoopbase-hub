@@ -22,7 +22,7 @@ export default function SubmitVideo() {
     }
     setLoading(true)
     setError('')
-    const { error: err } = await supabase.from('video_submissions').insert({
+    const { error: err } = await supabase.from('hb_video_submissions').insert({
       team_path: teamPath,
       youtube_url: form.youtube_url,
       game_label: form.game_label,

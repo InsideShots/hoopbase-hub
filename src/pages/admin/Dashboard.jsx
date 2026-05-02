@@ -8,8 +8,8 @@ export default function Dashboard() {
   useEffect(() => {
     const load = async () => {
       const [teams, videos] = await Promise.all([
-        supabase.from('team_join_requests').select('status'),
-        supabase.from('video_submissions').select('status'),
+        supabase.from('hb_team_join_requests').select('status'),
+        supabase.from('hb_video_submissions').select('status'),
       ])
       const tr = teams.data || []
       const vr = videos.data || []

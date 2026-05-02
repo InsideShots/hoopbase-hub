@@ -11,7 +11,7 @@ export default function VideoQueue() {
   const load = async () => {
     setLoading(true)
     const { data } = await supabase
-      .from('video_submissions')
+      .from('hb_video_submissions')
       .select('*, stat_suggestions:video_stat_suggestions(*)')
       .order('created_at', { ascending: false })
     setVideos(data || [])
@@ -23,7 +23,7 @@ export default function VideoQueue() {
   const updateStatus = async (id, status, youtube_playlist_url = null) => {
     const update = { status, updated_at: new Date().toISOString() }
     if (youtube_playlist_url) update.youtube_playlist_url = youtube_playlist_url
-    await supabase.from('video_submissions').update(update).eq('id', id)
+    await supabase.from('hb_video_submissions').update(update).eq('id', id)
     load()
   }
 
@@ -128,13 +128,13 @@ function StatSuggestions({ suggestions, videoId, onSave }) {
   const save = async () => {
     await Promise.all(
       suggestions.map(s =>
-        supabase.from('video_stat_suggestions').update({
+        supabase.from('hb_video_stat_suggestions').update({
           confirmed_value: vals[s.id],
           confirmed: true,
         }).eq('id', s.id)
       )
     )
-    await supabase.from('video_submissions').update({ status: 'reviewed' }).eq('id', videoId)
+    await supabase.from('hb_video_submissions').update({ status: 'reviewed' }).eq('id', videoId)
     onSave()
   }
 

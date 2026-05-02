@@ -10,7 +10,7 @@ export default function TeamsManager() {
   const load = async () => {
     setLoading(true)
     const { data } = await supabase
-      .from('team_join_requests')
+      .from('hb_team_join_requests')
       .select('*')
       .order('created_at', { ascending: false })
     setRequests(data || [])
@@ -20,7 +20,7 @@ export default function TeamsManager() {
   useEffect(() => { load() }, [])
 
   const updateStatus = async (id, status) => {
-    await supabase.from('team_join_requests').update({ status, updated_at: new Date().toISOString() }).eq('id', id)
+    await supabase.from('hb_team_join_requests').update({ status, updated_at: new Date().toISOString() }).eq('id', id)
     load()
   }
 

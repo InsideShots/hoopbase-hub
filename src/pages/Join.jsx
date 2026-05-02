@@ -32,7 +32,7 @@ export default function Join() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    const { error: err } = await supabase.from('team_join_requests').insert({
+    const { error: err } = await supabase.from('hb_team_join_requests').insert({
       club_name: form.club_name,
       club_slug: form.club_slug,
       contact_name: form.contact_name,
