@@ -70,17 +70,28 @@ function frameToTensor(canvas, ctx, sourceEl) {
   return out;
 }
 
+const TOTAL_STAGES = 5;
+
 export default function ProStudioBench() {
   const [files, setFiles] = useState([]);
   const [log, setLog] = useState([]);
   const [running, setRunning] = useState(false);
   const [verdict, setVerdict] = useState(null);
+  const [progress, setProgress] = useState({ stage: 0, label: "Idle", pct: 0, etaMs: null });
   const logRef = useRef([]);
 
   const append = useCallback((line) => {
     const t = new Date().toLocaleTimeString();
     logRef.current = [...logRef.current, `[${t}] ${line}`];
     setLog([...logRef.current]);
+  }, []);
+
+  const setStage = useCallback((stage, label) => {
+    setProgress({ stage, label, pct: 0, etaMs: null });
+  }, []);
+
+  const setPct = useCallback((pct, etaMs = null) => {
+    setProgress((p) => ({ ...p, pct: Math.min(1, Math.max(0, pct)), etaMs }));
   }, []);
 
   const onPick = (e) => setFiles(Array.from(e.target.files || []).slice(0, PARALLEL_STREAMS));
@@ -104,18 +115,21 @@ export default function ProStudioBench() {
       append(`Memory before: used=${fmtMB(memBefore?.used)} limit=${fmtMB(memBefore?.limit)}`);
 
       // ---- Stage 1: video decode setup ----
+      setStage(1, "Loading clips");
       append("Stage 1 — loading clips into HTMLVideoElements …");
       const sources = [];
       for (let i = 0; i < PARALLEL_STREAMS; i++) {
         const f = files[i % files.length];
         const v = await loadVideoIntoElement(f);
         sources.push(v);
+        setPct((i + 1) / PARALLEL_STREAMS);
         append(`  clip ${i + 1}: ${f.name} ${v.w}×${v.h} ${v.durationMs.toFixed(0)} ms`);
       }
       const memAfterDecodeSetup = memSnapshot();
       append(`Memory after decode setup: used=${fmtMB(memAfterDecodeSetup?.used)}`);
 
       // ---- Stage 2: ONNX Runtime Web ----
+      setStage(2, "Loading ONNX runtime + model");
       append("Stage 2 — loading onnxruntime-web from CDN …");
       const t0Ort = performance.now();
       await loadScript(ORT_CDN);
@@ -125,12 +139,36 @@ export default function ProStudioBench() {
 
       append(`Stage 2b — fetching YOLOv8n ONNX (${YOLO_MODEL_URL}) …`);
       const t0Model = performance.now();
+      // Stream-fetch with progress so we can show a real download bar.
+      const resp = await fetch(YOLO_MODEL_URL);
+      const total = +resp.headers.get("content-length") || 0;
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let received = 0;
+      const fetchStart = performance.now();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        if (total) {
+          const pct = received / total;
+          const elapsedMs = performance.now() - fetchStart;
+          const etaMs = pct > 0.02 ? (elapsedMs / pct) - elapsedMs : null;
+          setPct(pct, etaMs);
+        }
+      }
+      const modelBytes = new Uint8Array(received);
+      let offset = 0;
+      for (const c of chunks) { modelBytes.set(c, offset); offset += c.length; }
+      append(`  fetched ${fmtMB(received)} in ${(performance.now() - fetchStart).toFixed(0)} ms`);
+
       const tryEPs = "gpu" in navigator ? ["webgpu", "wasm"] : ["wasm"];
       let session = null;
       let ep = null;
       for (const candidate of tryEPs) {
         try {
-          const s = await ort.InferenceSession.create(YOLO_MODEL_URL, {
+          const s = await ort.InferenceSession.create(modelBytes, {
             executionProviders: [candidate],
             graphOptimizationLevel: "all",
           });
@@ -150,6 +188,7 @@ export default function ProStudioBench() {
       append(`  model loaded + warmed in ${(performance.now() - t0Model).toFixed(0)} ms (EP: ${ep})`);
 
       // ---- Stage 3: inference loop ----
+      setStage(3, `Inference (${PARALLEL_STREAMS}× streams)`);
       append(`Stage 3 — running ${PARALLEL_STREAMS}× streams @ ${SAMPLE_FPS}fps for ${BENCH_SECONDS}s …`);
       const canvases = sources.map(() => {
         const c = document.createElement("canvas");
@@ -159,7 +198,8 @@ export default function ProStudioBench() {
       });
       await Promise.all(sources.map((s) => s.el.play().catch(() => {})));
       const inferenceTimes = [];
-      const benchEnd = performance.now() + BENCH_SECONDS * 1000;
+      const benchStartMs = performance.now();
+      const benchEnd = benchStartMs + BENCH_SECONDS * 1000;
       const intervalMs = 1000 / SAMPLE_FPS;
       let frames = 0;
       while (performance.now() < benchEnd) {
@@ -173,8 +213,11 @@ export default function ProStudioBench() {
           inferenceTimes.push(performance.now() - inferStart);
           frames++;
         }
-        const elapsed = performance.now() - tickStart;
-        if (elapsed < intervalMs) await new Promise((r) => setTimeout(r, intervalMs - elapsed));
+        const elapsed = performance.now() - benchStartMs;
+        const totalMs = BENCH_SECONDS * 1000;
+        setPct(elapsed / totalMs, totalMs - elapsed);
+        const tickElapsed = performance.now() - tickStart;
+        if (tickElapsed < intervalMs) await new Promise((r) => setTimeout(r, intervalMs - tickElapsed));
       }
       sources.forEach((s) => s.el.pause());
       const memAfterInfer = memSnapshot();
@@ -186,6 +229,7 @@ export default function ProStudioBench() {
       append(`  Memory after inference: used=${fmtMB(memAfterInfer?.used)}`);
 
       // ---- Stage 3b: native-resolution decode + draw stress ----
+      setStage(4, `Native-res draw (${sources[0].w}×${sources[0].h})`);
       append(`Stage 3b — decoding ${PARALLEL_STREAMS}× streams at NATIVE resolution (${sources[0].w}×${sources[0].h}) for 4s …`);
       const nativeCanvases = sources.map((s) => {
         const c = document.createElement("canvas");
@@ -195,7 +239,8 @@ export default function ProStudioBench() {
       });
       await Promise.all(sources.map((s) => s.el.play().catch(() => {})));
       const drawTimes = [];
-      const nativeEnd = performance.now() + 4000;
+      const nativeStart = performance.now();
+      const nativeEnd = nativeStart + 4000;
       let nativeFrames = 0;
       while (performance.now() < nativeEnd) {
         const tickStart = performance.now();
@@ -205,8 +250,10 @@ export default function ProStudioBench() {
           drawTimes.push(performance.now() - t0);
           nativeFrames++;
         }
-        const elapsed = performance.now() - tickStart;
-        if (elapsed < intervalMs) await new Promise((r) => setTimeout(r, intervalMs - elapsed));
+        const elapsed = performance.now() - nativeStart;
+        setPct(elapsed / 4000, 4000 - elapsed);
+        const tickElapsed = performance.now() - tickStart;
+        if (tickElapsed < intervalMs) await new Promise((r) => setTimeout(r, intervalMs - tickElapsed));
       }
       sources.forEach((s) => s.el.pause());
       const avgDraw = drawTimes.reduce((a, b) => a + b, 0) / drawTimes.length;
@@ -214,28 +261,46 @@ export default function ProStudioBench() {
       append(`  native draws: ${nativeFrames} frames, avg ${avgDraw.toFixed(1)} ms/frame`);
       append(`  Memory after native draw: used=${fmtMB(memAfterNative?.used)}`);
 
-      // ---- Stage 4: FFmpeg.wasm concat ----
-      append("Stage 4 — loading FFmpeg.wasm (single-threaded core) …");
+      // ---- Stage 5: FFmpeg.wasm concat (synthetic 720p clips so it always finishes) ----
+      setStage(5, "Loading FFmpeg.wasm");
+      append("Stage 5 — loading FFmpeg.wasm (single-threaded core) …");
       const t0Ff = performance.now();
       await loadScript(FFMPEG_UTIL_CDN);
       await loadScript(FFMPEG_CDN);
       const { FFmpeg } = window.FFmpegWASM;
-      const { fetchFile, toBlobURL } = window.FFmpegUtil;
+      const { toBlobURL } = window.FFmpegUtil;
       const [coreURL, wasmURL, workerURL] = await Promise.all([
         toBlobURL(`${FFMPEG_CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
         toBlobURL(`${FFMPEG_CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
         toBlobURL(`${FFMPEG_CDN}`, "text/javascript"),
       ]);
       const ffmpeg = new FFmpeg();
+      ffmpeg.on("progress", ({ progress }) => {
+        if (progress >= 0 && progress <= 1) setPct(progress);
+      });
       await ffmpeg.load({ coreURL, wasmURL, classWorkerURL: workerURL });
       append(`  ffmpeg loaded in ${(performance.now() - t0Ff).toFixed(0)} ms`);
 
-      append("Stage 4b — concat 4 clips (copy codec, no re-encode) …");
-      const t0Cat = performance.now();
+      // Source files are full-game MOVs (multi-GB) — too big to writeFile into
+      // the WASM virtual FS without OOM. Instead, generate 4× 5-second 720p
+      // synthetic clips and concat those. Pure throughput measurement, scales
+      // linearly to real-clip size at runtime.
+      append("Stage 5b — generating 4× 5s synthetic 720p clips …");
+      setStage(5, "Generating synthetic clips");
+      const t0Synth = performance.now();
       for (let i = 0; i < PARALLEL_STREAMS; i++) {
-        const f = files[i % files.length];
-        await ffmpeg.writeFile(`in${i}.mp4`, await fetchFile(f));
+        await ffmpeg.exec([
+          "-f", "lavfi", "-i", `testsrc=duration=5:size=1280x720:rate=30`,
+          "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+          `in${i}.mp4`,
+        ]);
+        setPct((i + 1) / PARALLEL_STREAMS);
       }
+      append(`  generated in ${(performance.now() - t0Synth).toFixed(0)} ms`);
+
+      append("Stage 5c — concat 4 synthetic clips (copy codec, no re-encode) …");
+      setStage(5, "Concatenating clips");
+      const t0Cat = performance.now();
       const list = Array.from({ length: PARALLEL_STREAMS }, (_, i) => `file 'in${i}.mp4'`).join("\n");
       await ffmpeg.writeFile("list.txt", new TextEncoder().encode(list));
       await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "out.mp4"]);
@@ -306,6 +371,28 @@ export default function ProStudioBench() {
           {running ? "Running…" : "Start bench"}
         </button>
       </div>
+
+      {running && (
+        <div className="bg-gray-900 rounded-2xl border border-gray-800 p-4 mb-4">
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-gray-200 font-medium">
+              Stage {progress.stage}/{TOTAL_STAGES}: {progress.label}
+            </span>
+            <span className="text-gray-400 tabular-nums">
+              {(progress.pct * 100).toFixed(0)}%
+              {progress.etaMs != null && progress.etaMs > 0 && (
+                <span className="ml-3">~{Math.ceil(progress.etaMs / 1000)}s left</span>
+              )}
+            </span>
+          </div>
+          <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-brand-500 transition-all duration-200"
+              style={{ width: `${(progress.pct * 100).toFixed(1)}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {log.length > 0 && (
         <div className="bg-black text-green-300 rounded-2xl p-3 mb-4 font-mono text-xs whitespace-pre-wrap max-h-96 overflow-auto border border-gray-800">
