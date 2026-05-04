@@ -8,6 +8,7 @@ import AdminLayout from './pages/admin/AdminLayout'
 import Dashboard from './pages/admin/Dashboard'
 import TeamsManager from './pages/admin/TeamsManager'
 import VideoQueue from './pages/admin/VideoQueue'
+import ProStudioBench from './pages/admin/ProStudioBench'
 import TeamLayout from './pages/team/TeamLayout'
 import TeamHome from './pages/team/TeamHome'
 import Games from './pages/team/Games'
@@ -39,6 +40,7 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="teams" element={<TeamsManager />} />
             <Route path="videos" element={<VideoQueue />} />
+            <Route path="pro-studio-bench" element={<ProStudioBench />} />
             <Route path="settings" element={<Soon title="Settings" />} />
           </Route>
 

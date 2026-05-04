@@ -1,11 +1,12 @@
 import { NavLink, Outlet, Navigate } from 'react-router-dom'
 import { useAuth } from '../../lib/AuthContext'
-import { Users, Video, LayoutDashboard, Settings } from 'lucide-react'
+import { Users, Video, LayoutDashboard, Settings, Activity } from 'lucide-react'
 
 const nav = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/admin/teams', label: 'Teams', icon: Users },
   { to: '/admin/videos', label: 'Video Queue', icon: Video },
+  { to: '/admin/pro-studio-bench', label: 'Pro Studio Bench', icon: Activity },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 
