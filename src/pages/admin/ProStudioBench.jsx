@@ -1,6 +1,10 @@
 // W20.H.10 — Pro Studio compute budget audit (hoopbase.com.au admin tool).
 // Lazy-loads FFmpeg.wasm + onnxruntime-web from CDN.
 // Run on a target coach laptop; copy the verdict block into docs/PRO_STUDIO.md.
+//
+// W20.H.4-pre: also tests yolov8n_webgpu.onnx (last-axis Softmax) when the
+// patched model is present at /models/yolov8n_webgpu.onnx.  Generates both
+// 720p and 1080p synthetic clips so both resolutions are audited.
 
 import { useState, useRef, useCallback } from "react";
 
@@ -8,8 +12,11 @@ const ORT_CDN = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.we
 const FFMPEG_CDN = "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js";
 const FFMPEG_UTIL_CDN = "https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js";
 const FFMPEG_CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
-// Single-file YOLOv8n ONNX (~12 MB). Stand-in until YOLOv11-nano stabilises.
-const YOLO_MODEL_URL = "https://cdn.jsdelivr.net/gh/Hyuto/yolov8-onnxruntime-web@master/public/model/yolov8n.onnx";
+// Stock YOLOv8n — DFL Softmax(axis=1) forces WASM fallback on WebGPU.
+const YOLO_MODEL_URL_STOCK = "https://cdn.jsdelivr.net/gh/Hyuto/yolov8-onnxruntime-web@master/public/model/yolov8n.onnx";
+// Patched model — produced by scripts/export_webgpu_model.py.
+// Upload to Supabase Storage and update this URL to enable WebGPU bench.
+const YOLO_MODEL_URL_WEBGPU = "/models/yolov8n_webgpu.onnx";
 
 const SAMPLE_FPS = 5;
 const BENCH_SECONDS = 8;
@@ -70,7 +77,13 @@ function frameToTensor(canvas, ctx, sourceEl) {
   return out;
 }
 
-const TOTAL_STAGES = 5;
+const TOTAL_STAGES = 6;
+
+// Resolution profiles for synthetic FFmpeg bench clips
+const RES_PROFILES = {
+  "720p":  { w: 1280,  h: 720  },
+  "1080p": { w: 1920,  h: 1080 },
+};
 
 export default function ProStudioBench() {
   const [files, setFiles] = useState([]);
@@ -78,6 +91,8 @@ export default function ProStudioBench() {
   const [running, setRunning] = useState(false);
   const [verdict, setVerdict] = useState(null);
   const [progress, setProgress] = useState({ stage: 0, label: "Idle", pct: 0, etaMs: null });
+  const [useWebgpuModel, setUseWebgpuModel] = useState(false);
+  const [resProfile, setResProfile] = useState("720p");
   const logRef = useRef([]);
 
   const append = useCallback((line) => {
@@ -106,12 +121,16 @@ export default function ProStudioBench() {
     logRef.current = [];
     setLog([]);
     const overall = { startedAt: new Date().toISOString() };
+    const modelUrl = useWebgpuModel ? YOLO_MODEL_URL_WEBGPU : YOLO_MODEL_URL_STOCK;
+    const { w: synthW, h: synthH } = RES_PROFILES[resProfile];
     try {
       const memBefore = memSnapshot();
       append(`UA: ${navigator.userAgent}`);
       append(`Hardware concurrency: ${navigator.hardwareConcurrency} threads`);
       append(`WebGPU: ${"gpu" in navigator ? "yes" : "no"}`);
       append(`SharedArrayBuffer: ${typeof SharedArrayBuffer !== "undefined" ? "yes" : "no"}`);
+      append(`Model: ${useWebgpuModel ? "yolov8n_webgpu (patched)" : "yolov8n (stock)"}`);
+      append(`Synthetic resolution: ${resProfile} (${synthW}×${synthH})`);
       append(`Memory before: used=${fmtMB(memBefore?.used)} limit=${fmtMB(memBefore?.limit)}`);
 
       // ---- Stage 1: video decode setup ----
@@ -137,10 +156,10 @@ export default function ProStudioBench() {
       ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/";
       append(`  ort loaded in ${(performance.now() - t0Ort).toFixed(0)} ms`);
 
-      append(`Stage 2b — fetching YOLOv8n ONNX (${YOLO_MODEL_URL}) …`);
+      append(`Stage 2b — fetching ONNX model (${modelUrl}) …`);
       const t0Model = performance.now();
       // Stream-fetch with progress so we can show a real download bar.
-      const resp = await fetch(YOLO_MODEL_URL);
+      const resp = await fetch(modelUrl);
       const total = +resp.headers.get("content-length") || 0;
       const reader = resp.body.getReader();
       const chunks = [];
@@ -281,16 +300,13 @@ export default function ProStudioBench() {
       await ffmpeg.load({ coreURL, wasmURL, classWorkerURL: workerURL });
       append(`  ffmpeg loaded in ${(performance.now() - t0Ff).toFixed(0)} ms`);
 
-      // Source files are full-game MOVs (multi-GB) — too big to writeFile into
-      // the WASM virtual FS without OOM. Instead, generate 4× 5-second 720p
-      // synthetic clips and concat those. Pure throughput measurement, scales
-      // linearly to real-clip size at runtime.
-      append("Stage 5b — generating 4× 5s synthetic 720p clips …");
-      setStage(5, "Generating synthetic clips");
+      // Generate synthetic clips at selected resolution (no OOM — synthetic data).
+      append(`Stage 5b — generating 4× 5s synthetic ${resProfile} clips (${synthW}×${synthH}) …`);
+      setStage(5, `Generating synthetic ${resProfile} clips`);
       const t0Synth = performance.now();
       for (let i = 0; i < PARALLEL_STREAMS; i++) {
         await ffmpeg.exec([
-          "-f", "lavfi", "-i", `testsrc=duration=5:size=1280x720:rate=30`,
+          "-f", "lavfi", "-i", `testsrc=duration=5:size=${synthW}x${synthH}:rate=30`,
           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
           `in${i}.mp4`,
         ]);
@@ -298,7 +314,7 @@ export default function ProStudioBench() {
       }
       append(`  generated in ${(performance.now() - t0Synth).toFixed(0)} ms`);
 
-      append("Stage 5c — concat 4 synthetic clips (copy codec, no re-encode) …");
+      append(`Stage 5c — concat 4 synthetic ${resProfile} clips (copy codec) …`);
       setStage(5, "Concatenating clips");
       const t0Cat = performance.now();
       const list = Array.from({ length: PARALLEL_STREAMS }, (_, i) => `file 'in${i}.mp4'`).join("\n");
@@ -310,23 +326,55 @@ export default function ProStudioBench() {
       append(`  concat done in ${concatMs.toFixed(0)} ms — output ${fmtMB(out.byteLength)}`);
       append(`  Memory after ffmpeg: used=${fmtMB(memAfterFf?.used)}`);
 
+      // ---- Stage 6: 1080p cross-check (only when 720p profile selected) ----
+      let concat1080Ms = null;
+      let memAfter1080 = null;
+      if (resProfile === "720p") {
+        setStage(6, "1080p cross-check");
+        append("Stage 6 — 1080p cross-check: gen 2× 5s synthetic 1920×1080 clips …");
+        const t0_1080 = performance.now();
+        for (let i = 0; i < 2; i++) {
+          await ffmpeg.exec([
+            "-f", "lavfi", "-i", "testsrc=duration=5:size=1920x1080:rate=30",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            `hd${i}.mp4`,
+          ]);
+          setPct((i + 1) / 2);
+        }
+        const list1080 = "file 'hd0.mp4'\nfile 'hd1.mp4'";
+        await ffmpeg.writeFile("list1080.txt", new TextEncoder().encode(list1080));
+        await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "list1080.txt", "-c", "copy", "out1080.mp4"]);
+        const out1080 = await ffmpeg.readFile("out1080.mp4");
+        concat1080Ms = performance.now() - t0_1080;
+        memAfter1080 = memSnapshot();
+        append(`  1080p concat: ${concat1080Ms.toFixed(0)} ms — ${fmtMB(out1080.byteLength)}`);
+        append(`  Memory after 1080p: used=${fmtMB(memAfter1080?.used)}`);
+        const ratio1080 = concat1080Ms / concatMs;
+        append(`  1080p/720p concat ratio: ${ratio1080.toFixed(2)}× — ${ratio1080 < 2.5 ? "1080p VIABLE" : "1080p may strain low-end hardware"}`);
+      }
+
       // ---- Verdict ----
       const peakMb = Math.max(
         memBefore?.used || 0,
         memAfterDecodeSetup?.used || 0,
         memAfterInfer?.used || 0,
         memAfterNative?.used || 0,
-        memAfterFf?.used || 0
+        memAfterFf?.used || 0,
+        memAfter1080?.used || 0,
       ) / 1024 / 1024;
       const v = {
         ts: overall.startedAt,
         ua: navigator.userAgent,
         ep,
+        model: useWebgpuModel ? "yolov8n_webgpu" : "yolov8n_stock",
+        resProfile,
+        synthRes: `${synthW}×${synthH}`,
         avgInferMs: avg,
         p95InferMs: p95,
         framesPerSecond: frames / BENCH_SECONDS,
         avgNativeDrawMs: avgDraw,
         ffmpegConcatMs: concatMs,
+        concat1080Ms,
         peakHeapMb: peakMb.toFixed(0),
         webgpu: "gpu" in navigator,
         sab: typeof SharedArrayBuffer !== "undefined",
@@ -345,16 +393,40 @@ export default function ProStudioBench() {
   return (
     <div className="p-6 max-w-3xl">
       <h1 className="text-2xl font-bold text-white mb-1">Pro Studio Bench</h1>
-      <p className="text-sm text-gray-400 mb-6">W20.H.10 — compute budget audit</p>
+      <p className="text-sm text-gray-400 mb-6">W20.H.10 / W20.H.4-pre — compute + WebGPU audit</p>
 
       <div className="bg-gray-900 rounded-2xl border border-gray-800 p-4 mb-4 space-y-3 text-sm text-gray-300">
         <p>
-          Worst-case browser-compute load: 4 parallel video streams sampled at {SAMPLE_FPS} fps through YOLOv8n ONNX,
-          plus an FFmpeg.wasm concat. Reports avg / p95 inference ms, FFmpeg concat ms, peak JS heap.
+          Worst-case load: 4 parallel streams @ {SAMPLE_FPS} fps through YOLOv8n ONNX + FFmpeg.wasm concat.
+          Now also tests 1080p synthetic concat and the WebGPU-patched model.
         </p>
-        <p>
-          Pick 1–4 sample files. Same files replay if fewer than 4 are picked.
-        </p>
+        <p>Pick 1–4 sample files. Same files replay if fewer than 4 are picked.</p>
+
+        {/* Model selector */}
+        <div className="flex gap-3 flex-wrap">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="model" value="stock" checked={!useWebgpuModel}
+              onChange={() => setUseWebgpuModel(false)} disabled={running} />
+            <span>Stock yolov8n (WASM fallback expected)</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="model" value="webgpu" checked={useWebgpuModel}
+              onChange={() => setUseWebgpuModel(true)} disabled={running} />
+            <span>Patched yolov8n_webgpu <span className="text-amber-400">(needs export_webgpu_model.py first)</span></span>
+          </label>
+        </div>
+
+        {/* Resolution selector */}
+        <div className="flex gap-3 flex-wrap">
+          {Object.keys(RES_PROFILES).map(k => (
+            <label key={k} className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="res" value={k} checked={resProfile === k}
+                onChange={() => setResProfile(k)} disabled={running} />
+              <span>{k} synthetic{k === "720p" ? " + 1080p cross-check" : ""}</span>
+            </label>
+          ))}
+        </div>
+
         <input
           type="file"
           accept="video/*"
@@ -406,13 +478,14 @@ export default function ProStudioBench() {
           <pre className="bg-gray-950 p-3 rounded-lg text-xs overflow-auto whitespace-pre text-green-300">
 {`### Bench result — ${verdict.ts}
 - UA: ${verdict.ua}
-- Source clips: ${verdict.sourceRes} (resampled to 640×640 for inference)
+- Model: ${verdict.model}  Source clips: ${verdict.sourceRes} (inference always at 640×640)
 - ONNX EP: ${verdict.ep}  WebGPU available: ${verdict.webgpu}  SharedArrayBuffer: ${verdict.sab}
 - Inference (640×640, 4 streams): avg ${verdict.avgInferMs.toFixed(1)} ms | p95 ${verdict.p95InferMs.toFixed(1)} ms | aggregate ${verdict.framesPerSecond.toFixed(1)} fps
 - Native-res draw (${verdict.sourceRes}, 4 streams): avg ${verdict.avgNativeDrawMs.toFixed(1)} ms/frame
-- FFmpeg concat (4× input clips): ${verdict.ffmpegConcatMs.toFixed(0)} ms
+- FFmpeg concat (4× ${verdict.synthRes} clips): ${verdict.ffmpegConcatMs.toFixed(0)} ms${verdict.concat1080Ms != null ? `\n- FFmpeg concat (2× 1080p cross-check): ${verdict.concat1080Ms.toFixed(0)} ms — ${(verdict.concat1080Ms / verdict.ffmpegConcatMs).toFixed(2)}× ratio — ${verdict.concat1080Ms / verdict.ffmpegConcatMs < 2.5 ? "1080p VIABLE" : "1080p marginal"}` : ""}
 - Peak JS heap: ${verdict.peakHeapMb} MB
-- Verdict: ${verdict.avgInferMs < 80 && verdict.peakHeapMb < 2000 ? "PASS — 4× 720p concurrent feasible" : "REVIEW — exceeds budget; consider lower sample fps, 2× streams, or queue-to-GPU model"}`}
+- Inference verdict: ${verdict.avgInferMs < 80 ? `PASS (${verdict.ep} EP)` : `REVIEW — ${verdict.avgInferMs.toFixed(0)} ms/frame exceeds 80 ms budget`}
+- 1080p verdict: ${verdict.concat1080Ms != null ? (verdict.concat1080Ms / verdict.ffmpegConcatMs < 2.5 ? "VIABLE — use 1080p for single-stream Pro Studio" : "MARGINAL — cap at 720p on this hardware") : "not tested"}`}
           </pre>
         </div>
       )}
