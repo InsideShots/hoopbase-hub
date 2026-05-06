@@ -3,7 +3,14 @@ import { supabase } from './supabase'
 
 const AuthContext = createContext(null)
 
-const ADMIN_EMAIL = 'mark@insideshots.au'
+// Email-fallback super-admin set, mirrors W6.SUPERADMIN-LOCK (migration 034)
+// in the my-court-stats23 repo. The DB-side `is_super_admin()` RPC is the
+// real gate — this just toggles isAdmin for nav/UI rendering. Closed-set
+// so a leaked secret can't elevate an arbitrary email client-side.
+const ADMIN_EMAILS = new Set([
+  'mark@insideshots.au',
+  'medmonds19@outlook.com',
+])
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
@@ -21,7 +28,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const user = session?.user ?? null
-  const isAdmin = user?.email === ADMIN_EMAIL
+  const isAdmin = !!user?.email && ADMIN_EMAILS.has(user.email.toLowerCase())
 
   return (
     <AuthContext.Provider value={{ session, user, supabaseUser: user, isAdmin, loading, isLoadingAuth: loading }}>

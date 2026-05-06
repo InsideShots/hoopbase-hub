@@ -20,6 +20,7 @@ import PlayerProfileEdit from './pages/player/ProfileEdit'
 import PlayerProfileAccess from './pages/player/ProfileAccess'
 import PlayerOnboard from './pages/player/Onboard'
 import ConsentConfirm from './pages/player/ConsentConfirm'
+import SuperAdmin from './pages/admin/SuperAdmin'
 
 const Soon = ({ title }) => (
   <div className="text-gray-400 py-16 text-center">
@@ -50,6 +51,9 @@ export default function App() {
               <Join />
             </div>
           } />
+
+          {/* SuperAdmin — top-level URL Mark uses; gate is is_super_admin() RPC */}
+          <Route path="/SuperAdmin" element={<SuperAdmin />} />
 
           {/* Admin */}
           <Route path="/admin" element={<AdminLayout />}>
