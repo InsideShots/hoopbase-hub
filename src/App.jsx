@@ -13,6 +13,13 @@ import TeamLayout from './pages/team/TeamLayout'
 import TeamHome from './pages/team/TeamHome'
 import Games from './pages/team/Games'
 import SubmitVideo from './pages/team/SubmitVideo'
+import Auth from './pages/auth/Auth'
+import PlayerHome from './pages/player/Home'
+import PlayerProfile from './pages/player/Profile'
+import PlayerProfileEdit from './pages/player/ProfileEdit'
+import PlayerProfileAccess from './pages/player/ProfileAccess'
+import PlayerOnboard from './pages/player/Onboard'
+import ConsentConfirm from './pages/player/ConsentConfirm'
 
 const Soon = ({ title }) => (
   <div className="text-gray-400 py-16 text-center">
@@ -28,6 +35,15 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/auth" element={<Auth />} />
+
+          {/* Player profiles */}
+          <Route path="/p" element={<PlayerHome />} />
+          <Route path="/p/onboard" element={<PlayerOnboard />} />
+          <Route path="/p/consent-confirm" element={<ConsentConfirm />} />
+          <Route path="/p/:uid" element={<PlayerProfile />} />
+          <Route path="/p/:uid/edit" element={<PlayerProfileEdit />} />
+          <Route path="/p/:uid/access" element={<PlayerProfileAccess />} />
           <Route path="/join" element={
             <div className="min-h-screen bg-gray-950">
               <Header />

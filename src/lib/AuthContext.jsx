@@ -24,7 +24,7 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.email === ADMIN_EMAIL
 
   return (
-    <AuthContext.Provider value={{ session, user, isAdmin, loading }}>
+    <AuthContext.Provider value={{ session, user, supabaseUser: user, isAdmin, loading, isLoadingAuth: loading }}>
       {children}
     </AuthContext.Provider>
   )
