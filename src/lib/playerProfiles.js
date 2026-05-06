@@ -10,7 +10,7 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const SUMMARY_COLS = [
   'id','full_name','owner_email','is_public','is_data_maintained','theme','theme_config',
   'photo_url','player_photo_url','player_uid','public_uid','jersey_number','positions',
-  'height_cm','weight_kg','dominant_hand','dob','hometown','bio','created_at','updated_at',
+  'height_cm','weight_kg','dominant_hand','dob','hometown','bio','playhq_id','created_at','updated_at',
 ].join(',')
 
 export async function fetchHoopBaseProfile(profileId) {
@@ -445,4 +445,45 @@ export function computeCareerAverages(games) {
   }
   const r = (n) => Math.round((n / gp) * 10) / 10
   return { gp, ppg: r(pts), rpg: r(reb), apg: r(ast), spg: r(stl), bpg: r(blk), mpg: r(min) }
+}
+
+// W4.14-LINK — fetch player list from a PlayHQ Game Centre URL.
+export async function fetchPlayHQGamePlayers(gameCentreUrl) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token || null
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/fetch-game-centre-stats`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${token || SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ gameCentreUrl }),
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok || !data?.success) throw new Error(data?.error || `fetch-game-centre-stats failed (${res.status})`)
+  return data.data
+}
+
+// W4.14-LINK — save a PlayHQ player ID to a profile.
+export async function savePlayHQId(profileId, playhqId) {
+  return updateProfile(profileId, { playhq_id: playhqId || null })
+}
+
+// W4.14 — trigger an on-demand PlayHQ stats sync for one profile.
+export async function syncPlayHQStatsNow(profileId) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token || null
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/sync-playhq-profile-stats`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${token || SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ profile_id: profileId }),
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.error || `sync failed (${res.status})`)
+  return data
 }

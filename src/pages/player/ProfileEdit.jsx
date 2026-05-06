@@ -14,6 +14,9 @@ import {
   createGame,
   deleteGame,
   parseTimecode,
+  fetchPlayHQGamePlayers,
+  savePlayHQId,
+  syncPlayHQStatsNow,
 } from '@/lib/playerProfiles'
 import { useAuth } from '@/lib/AuthContext'
 
@@ -177,6 +180,15 @@ export default function PlayerProfileEdit() {
               </button>
             </form>
 
+            <PlayHQLinkSection
+              profileId={uid}
+              currentPlayhqId={profile?.playhq_id || null}
+              dark={dark}
+              cardCls={cardCls}
+              inputCls={inputCls}
+              onChanged={refreshAll}
+            />
+
             {consentBlocked ? (
               <div className={`p-4 rounded-md border text-sm ${dark ? 'border-orange-700 bg-orange-900/30 text-orange-200' : 'border-orange-300 bg-orange-50 text-orange-800'}`}>
                 <strong>Seasons and games are locked.</strong> Parental consent must be confirmed before any data can be added to this profile.
@@ -188,6 +200,100 @@ export default function PlayerProfileEdit() {
         )}
       </div>
     </PlayerLayout>
+  )
+}
+
+function PlayHQLinkSection({ profileId, currentPlayhqId, dark, cardCls, inputCls, onChanged }) {
+  const [url, setUrl] = React.useState('')
+  const [loading, setLoading] = React.useState(false)
+  const [gameData, setGameData] = React.useState(null)
+  const [err, setErr] = React.useState(null)
+  const [linked, setLinked] = React.useState(currentPlayhqId)
+  const [syncing, setSyncing] = React.useState(false)
+  const [syncMsg, setSyncMsg] = React.useState(null)
+
+  React.useEffect(() => { setLinked(currentPlayhqId) }, [currentPlayhqId])
+
+  async function findPlayers() {
+    setErr(null); setGameData(null); setLoading(true)
+    try { const d = await fetchPlayHQGamePlayers(url.trim()); setGameData(d) }
+    catch (e2) { setErr(String(e2?.message || e2)) }
+    finally { setLoading(false) }
+  }
+
+  async function linkPlayer(playhqId) {
+    setErr(null)
+    try { await savePlayHQId(profileId, playhqId); setLinked(playhqId); setGameData(null); setUrl(''); onChanged() }
+    catch (e2) { setErr(`Link failed: ${e2?.message || e2}`) }
+  }
+
+  async function unlink() {
+    if (!confirm('Remove PlayHQ link? Stats already synced will remain.')) return
+    try { await savePlayHQId(profileId, null); setLinked(null); onChanged() }
+    catch (e2) { setErr(String(e2?.message || e2)) }
+  }
+
+  async function syncNow() {
+    setSyncing(true); setSyncMsg(null)
+    try { const r = await syncPlayHQStatsNow(profileId); setSyncMsg(`Synced ${r?.synced ?? 0} new game(s).`) }
+    catch (e2) { setSyncMsg(`Error: ${e2?.message || e2}`) }
+    finally { setSyncing(false) }
+  }
+
+  const pillCls = `px-2.5 py-1 rounded text-xs border ${dark ? 'border-neutral-700 bg-neutral-800 hover:bg-neutral-700' : 'border-neutral-200 bg-neutral-50 hover:bg-neutral-100'} cursor-pointer`
+
+  return (
+    <section className={cardCls}>
+      <h2 className="text-sm font-semibold mb-1">PlayHQ link</h2>
+      <p className="text-xs opacity-60 mb-3">Link this profile to a PlayHQ player so WABL stats sync automatically each night.</p>
+
+      {linked ? (
+        <div className="space-y-2">
+          <div className={`flex items-center gap-2 p-2.5 rounded-md border text-xs ${dark ? 'border-green-800 bg-green-900/20 text-green-300' : 'border-green-300 bg-green-50 text-green-800'}`}>
+            <span className="font-mono break-all">{linked}</span>
+            <button onClick={unlink} className="ml-auto shrink-0 opacity-60 hover:opacity-100 text-red-400 text-xs">Unlink</button>
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={syncNow} disabled={syncing} className="px-3 py-1.5 rounded-md bg-orange-600 text-white text-xs hover:bg-orange-700 disabled:opacity-50">
+              {syncing ? 'Syncing…' : 'Sync now'}
+            </button>
+            {syncMsg ? <span className={`text-xs ${syncMsg.startsWith('Error') ? 'text-red-400' : 'opacity-70'}`}>{syncMsg}</span> : null}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input type="text" placeholder="https://www.playhq.com/…/game-centre/…"
+              value={url} onChange={e => setUrl(e.target.value)} className={`${inputCls} flex-1`} />
+            <button onClick={findPlayers} disabled={loading || !url.trim()}
+              className="px-3 py-2 rounded-md bg-orange-600 text-white text-xs hover:bg-orange-700 disabled:opacity-50 whitespace-nowrap">
+              {loading ? 'Loading…' : 'Find players'}
+            </button>
+          </div>
+          {err ? <p className="text-xs text-red-400">{err}</p> : null}
+
+          {gameData && (
+            <div className="space-y-3">
+              {[['Home', gameData.home_team, gameData.home_players], ['Away', gameData.away_team, gameData.away_players]].map(([side, teamName, players]) => (
+                <div key={side}>
+                  <p className="text-[10px] uppercase font-semibold opacity-50 mb-1.5">{teamName || side}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(players || []).map(p => (
+                      <button key={p.playhq_id || p.name} onClick={() => linkPlayer(p.playhq_id)}
+                        disabled={!p.playhq_id} className={pillCls} title={p.playhq_id ? `ID: ${p.playhq_id}` : 'No ID available'}>
+                        {p.num ? <span className="opacity-50 mr-1">#{p.num}</span> : null}
+                        {p.name}
+                        {p.pts != null ? <span className="opacity-40 ml-1">·{p.pts}pt</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
