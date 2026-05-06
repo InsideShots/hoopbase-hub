@@ -4,3 +4,4 @@ dist/
 .DS_Store
 public/models/*.onnx
 scripts/_yolov8n_src.onnx
+.env.local
