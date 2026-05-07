@@ -170,6 +170,7 @@ export default function SuperAdmin() {
         <Crown className="w-5 h-5 text-brand-500" />
         <h1 className="font-bold">SuperAdmin</h1>
         <span className="text-xs text-gray-500 ml-2">{user.email}</span>
+        <a href="/account/mfa" className="ml-auto text-xs px-3 py-1 rounded-lg border border-gray-700 hover:bg-gray-900 text-gray-300">MFA setup →</a>
       </header>
 
       <nav className="border-b border-gray-800 px-5 py-2 flex gap-1 overflow-x-auto">
