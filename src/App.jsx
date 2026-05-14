@@ -22,6 +22,7 @@ import PlayerOnboard from './pages/player/Onboard'
 import ConsentConfirm from './pages/player/ConsentConfirm'
 import SuperAdmin from './pages/admin/SuperAdmin'
 import AccountMFA from './pages/account/MFA'
+import AccountProfile from './pages/account/Profile'
 
 const Soon = ({ title }) => (
   <div className="text-gray-400 py-16 text-center">
@@ -56,7 +57,9 @@ export default function App() {
           {/* SuperAdmin — top-level URL Mark uses; gate is is_super_admin() RPC */}
           <Route path="/SuperAdmin" element={<SuperAdmin />} />
 
-          {/* Account — TOTP MFA enrollment */}
+          {/* Account — profile + TOTP MFA */}
+          <Route path="/account" element={<AccountProfile />} />
+          <Route path="/account/profile" element={<AccountProfile />} />
           <Route path="/account/mfa" element={<AccountMFA />} />
 
           {/* Admin */}

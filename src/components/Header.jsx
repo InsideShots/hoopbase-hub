@@ -24,12 +24,15 @@ export default function Header() {
           <Link to="/admin" className="hover:text-brand-400 transition-colors">Admin</Link>
         )}
         {user ? (
-          <button
-            onClick={signOut}
-            className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg transition-colors"
-          >
-            Sign out
-          </button>
+          <>
+            <Link to="/account/profile" className="hover:text-brand-400 transition-colors">Profile</Link>
+            <button
+              onClick={signOut}
+              className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              Sign out
+            </button>
+          </>
         ) : (
           <Link
             to="/login"
